@@ -1,0 +1,8 @@
+
+#+HTML: <img src="banner.webp" align="center">
+
+Select two regions and view their diff as overlays.
+
+Bind =difflayer= to a convenient key.  Select a region and call =difflayer=.  Repeat again, and then call difflayer again.
+
+To remove overlays, call difflayer with a prefix argument (=C-u M-x difflayer=).
