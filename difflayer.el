@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: May 26, 2025
-;; Version: 0.0.2
+;; Modified: May 31, 2025
+;; Version: 0.1.0
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -59,15 +59,29 @@ Keys: :bounds :overlay :buffer")
 
 (defvar difflayer--commands
   (list 'ediff ""
-        'diff (list "diff" "-u ")
-        'git (list "git" "--no-pager" "diff" "--no-index")
-        'git-word (list "git" "--no-pager" "diff" "--no-index" "--word"))
+        'diff (list "diff" "-s" "-U0")
+        'git (list "git" "--no-pager" "diff" "--no-index" "-U0")
+        'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word"))
   "Commands associated with `difflayer-diff-style’.")
+
+(defvar difflayer--exit-code nil
+  "Exit code for the previous process call by Difflayer.")
+
+(defvar difflayer--done nil
+  "States whether difflayer has diffed two regions.")
 
 ;;;; Faces
 (defface difflayer-highlight-face
   '((t :inherit 'highlight))
   "Face for highlighting selected regions.")
+
+(defface difflayer-diff-added
+  '((t :inherit 'diff-added))
+  "Face for highlighting new parts of text.")
+
+(defface difflayer-diff-removed
+  '((t :inherit 'diff-removed))
+  "Face for highlighting deleted parts of text.")
 
 ;;;; Functions
 ;;;;; Register
@@ -95,17 +109,21 @@ Use METADATA (:bounds :buffer) if specified."
   "Clear all registered regions and stored diffs.
 When EVERYTHING is non-nil, clear all vars and overlays."
   (setq difflayer--metadata nil)
+  (setq difflayer--exit-code nil)
+  (setq difflayer--current-line nil)
   (when everything
     (setq difflayer--current-diff nil)
+    (setq difflayer--done nil)
     (difflayer--remove-all-selection-overlays)))
 
 ;;;;; Overlay
-;;;;;; Add
+;;;;;; Selection
+;;;;;;; Add
 (defun difflayer--add-selection-overlay (metadata)
   "Add overlay with face `difflayer-highlight-face’ to region in METADATA."
   (with-current-buffer (plist-get metadata :buffer)
-    (let* ((overlay (make-overlay (car (plist-get metadata :bounds))
-                                  (cdr (plist-get metadata :bounds)))))
+    (let ((overlay (make-overlay (car (plist-get metadata :bounds))
+                                 (cdr (plist-get metadata :bounds)))))
       (overlay-put overlay 'difflayer-highlight t)
       (overlay-put overlay 'face 'difflayer-highlight-face)
       (plist-put metadata :overlay overlay))))
@@ -115,14 +133,14 @@ When EVERYTHING is non-nil, clear all vars and overlays."
   (unless (= 0 (length difflayer--metadata))
     (mapc #'difflayer--add-selection-overlay difflayer--metadata)))
 
-;;;;;; Remove
+;;;;;;; Remove
 (defun difflayer--remove-selection-overlay (metadata)
   "Remove overlay in METADATA."
   (let ((buf (plist-get metadata :buffer)))
     (if (buffer-live-p buf)
         (with-current-buffer buf
           (delete-overlay (plist-get metadata :overlay)))
-      (difflayer--clear-vars t))))
+      (difflayer--clear-vars t)))) ;; If a registered buffer no longer exists, clear everything.
 
 (defun difflayer--remove-all-selection-overlays ()
   "Remove all selection overlays."
@@ -137,52 +155,115 @@ When EVERYTHING is non-nil, clear all vars and overlays."
             (buffer-list))
     (mapc #'difflayer--remove-selection-overlay difflayer--metadata)))
 
-;;;;; Diff
-(defun difflayer--diff ()
-  "Diff the two regions in `difflayer--metadata’ and overlay the resulting diff over them."
+;;;;;; Diff
+;;;;;;; Add Negative Overlay
+(defun difflayer--add-negative-overlay (beg end)
+  "Add an overlay that denotes removal of content between BEG and END."
+  (let ((overlay (make-overlay beg end)))
+    (overlay-put overlay 'difflayer-highlight t)
+    (overlay-put overlay 'face 'difflayer-diff-removed)))
+
+;;;;;;; Add Positive Overlay
+(defun difflayer--add-positive-overlay (beg end)
+  "Add an overlay that denotes addition of content between BEG and END."
+  (let ((overlay (make-overlay beg end)))
+    (overlay-put overlay 'difflayer-highlight t)
+    (overlay-put overlay 'face 'difflayer-diff-added)))
+
+;;;;; Get Diff
+(defun difflayer--get-diff ()
+  "Call the command associated with `difflayer-diff-style’."
   (let ((tempf0 (make-temp-file "difflayer0"))
-        (tempf1 (make-temp-file "difflayer1")))
+        (tempf1 (make-temp-file "difflayer1"))
+        (result))
+    (setq difflayer--metadata (reverse difflayer--metadata))
     (unwind-protect
-        (let ((r0 (plist-get (car difflayer--metadata) :bounds))
-              (r1 (plist-get (cadr difflayer--metadata) :bounds))
-              (b0 (plist-get (car difflayer--metadata) :buffer))
-              (b1 (plist-get (cadr difflayer--metadata) :buffer))
-              (exec (car (plist-get difflayer--commands difflayer-diff-style)))
-              (args (append (cdr (plist-get difflayer--commands difflayer-diff-style))
-                            (list "--" tempf0 tempf1)))
-              (inhibit-message t))
-          (with-current-buffer b0 (write-region (car r0) (cdr r0) tempf0))
-          (with-current-buffer b1 (write-region (car r1) (cdr r1) tempf1))
-          (setq difflayer--current-diff
+        (let* ((r0 (plist-get (car difflayer--metadata) :bounds))
+               (r1 (plist-get (cadr difflayer--metadata) :bounds))
+               (exec (car (plist-get difflayer--commands difflayer-diff-style)))
+               (args (append (cdr (plist-get difflayer--commands difflayer-diff-style))
+                             (list "--" tempf0 tempf1)))
+               (inhibit-message t))
+          (with-current-buffer (plist-get (car difflayer--metadata) :buffer)
+            (write-region (car r0) (cdr r0) tempf0))
+          (with-current-buffer (plist-get (cadr difflayer--metadata) :buffer)
+            (write-region (car r1) (cdr r1) tempf1))
+          (setq result
                 (apply #'process-lines-handling-status exec #'difflayer--status-handler args)))
-      (mapc #'delete-file (list tempf0 tempf1)))))
+      (mapc #'delete-file (list tempf0 tempf1))
+      result)))
 
 ;;;;;; Status Handler
 (defun difflayer--status-handler (status)
   "Handles STATUS for `process-lines-handling-status’ in `difflayer--diff’."
-  (pcase status
-    (0 (if (or (eq difflayer-diff-style 'git)
-               (eq difflayer-diff-style 'git-word))
-           (message "Selected regions are identical.")
-         t))
-    (1 (if (or (eq difflayer-diff-style 'git)
-               (eq difflayer-diff-style 'git-word))
-           t nil))))
+  (setq difflayer--exit-code status)
+  t)
+
+;;;;; Overlay Diff
+(defun difflayer--overlay-diff (d)
+  "Overlay the diff D over regions in `difflayer--metadata’."
+  (setq difflayer--current-diff d) ;; debug
+  (pcase difflayer-diff-style
+    ('git (mapc #'difflayer--overlay-diff--git d))
+    ('diff (mapc #'difflayer--overlay-diff--diff d))
+    (_ nil))
+  (setq difflayer--done t))
+
+;;;;;; type: git
+(defun difflayer--overlay-diff--git (line)
+  "Make overlays for a LINE from a git-style diff D."
+  (when (= 64 (aref line 0))
+    (let* ((l1 (line-number-at-pos (car (plist-get (car difflayer--metadata) :bounds))))
+           (l2 (line-number-at-pos (car (plist-get (cadr difflayer--metadata) :bounds))))
+           (buf1 (plist-get (car difflayer--metadata) :buffer))
+           (buf2 (plist-get (cadr difflayer--metadata) :buffer))
+           (indices ;; returns ((a b) (c d))
+            (mapcar (lambda (e) (mapcar #'string-to-number (split-string (substring e 1) ",")))
+                    (butlast (cdr (split-string line)))))
+           (a (+ l1 -1 (caar indices)))
+           (b (cadar indices))
+           (b (if b (if (= 0 b) b (+ a -1 b)) a))
+           (c (+ l2 -1 (caadr indices)))
+           (d (cadadr indices))
+           (d (if d (if (= 0 d) d (+ c -1 d)) c))
+           (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
+                                                     (forward-line (- l 1))
+                                                     (line-beginning-position))))
+           (line-end-pos (lambda (l) (save-excursion (goto-char (point-min))
+                                                     (forward-line (- l 1))
+                                                     (line-end-position)))))
+      (when (/= 0 b)
+        (with-current-buffer buf1
+          (difflayer--add-negative-overlay (funcall line-beg-pos a) (funcall line-end-pos b))))
+      (when (/= 0 d)
+        (with-current-buffer buf2
+          (difflayer--add-positive-overlay (funcall line-beg-pos c) (funcall line-end-pos d)))))))
+
+;;;;;; type: diff
+(defun difflayer--overlay-diff--diff (line)
+  "Make overlays for a LINE from a diff-style diff D."
+  (difflayer--overlay-diff--git line))
 
 ;;;;; Difflayer
-(defun difflayer ()
+(defun difflayer (arg)
   "Select two regions and overlay their diffs on them.
 Select a region and call this function.  Repeat for the second region.
-Call when region is inactive to diff the two previously selected regions."
-  (interactive)
+Call when region is inactive to diff the two previously selected regions.
+If ARG is non-nil, clear all highlights."
+  (interactive "P")
+  (if arg (difflayer--clear-vars t))
+  (if difflayer--done (difflayer--clear-vars t))
   (if (region-active-p)
       (difflayer--register-region)
     (if (/= 2 (length difflayer--metadata))
         (message "Difflayer needs 2 regions to work.  You have registered %s."
                  (length difflayer--metadata))
       (difflayer--remove-all-selection-overlays)
-      (difflayer--diff)
-      (difflayer--clear-vars))))
+      (let ((d (difflayer--get-diff)))
+        (pcase difflayer--exit-code
+          (0 (message "Diff (%s): Regions are identical." difflayer-diff-style))
+          (1 (difflayer--overlay-diff d))
+          (_ (message "Difflayer: %s exit: %s" difflayer-diff-style difflayer--exit-code)))))))
 
 ;;; provide
 (provide 'difflayer)
