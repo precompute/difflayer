@@ -6,7 +6,7 @@
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
 ;; Modified: May 31, 2025
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -34,12 +34,11 @@
 
 (defcustom difflayer-diff-style 'git
   "Diff style to use.
-'ediff    : Emacs' built-in ediff
 'diff     : GNU Diff
 'git      : git diff
-'git-word : git diff with word-level diff"
+'git-char : git diff with char-level diff"
   :type 'symbol :group 'difflayer
-  :options (list 'ediff 'diff 'git 'git-word))
+  :options (list 'diff 'git 'git-char))
 
 (defcustom difflayer-deactivate-mark t
   "When non-nil, mark is deactivated after a region is selected."
@@ -61,7 +60,8 @@ Keys: :bounds :overlay :buffer")
   (list 'ediff ""
         'diff (list "diff" "-s" "-U0")
         'git (list "git" "--no-pager" "diff" "--no-index" "-U0")
-        'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word"))
+        'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain")
+        'git-char (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain" "--word-diff-regex=."))
   "Commands associated with `difflayer-diff-style’.")
 
 (defvar difflayer--exit-code nil
@@ -116,6 +116,12 @@ When EVERYTHING is non-nil, clear all vars and overlays."
     (setq difflayer--done nil)
     (difflayer--remove-all-selection-overlays)))
 
+;;;;; Message
+(defun difflayer--message (add del)
+  "Displays a message with number of lines changed (ADD and DEL)."
+  (message "Diff: %s insertion%s, %s deletion%s"
+           add (if (> add 1) "s" "") del (if (> del 1) "s" "")))
+
 ;;;;; Overlay
 ;;;;;; Selection
 ;;;;;;; Add
@@ -158,15 +164,17 @@ When EVERYTHING is non-nil, clear all vars and overlays."
 ;;;;;; Diff
 ;;;;;;; Add Negative Overlay
 (defun difflayer--add-negative-overlay (beg end)
-  "Add an overlay that denotes removal of content between BEG and END."
+  "Add an overlay that shows removal of content between BEG and END."
   (let ((overlay (make-overlay beg end)))
+    (message "neg overlay %s to %s" beg end)
     (overlay-put overlay 'difflayer-highlight t)
     (overlay-put overlay 'face 'difflayer-diff-removed)))
 
 ;;;;;;; Add Positive Overlay
 (defun difflayer--add-positive-overlay (beg end)
-  "Add an overlay that denotes addition of content between BEG and END."
+  "Add an overlay that shows addition of content between BEG and END."
   (let ((overlay (make-overlay beg end)))
+    (message "pos overlay %s to %s" beg end)
     (overlay-put overlay 'difflayer-highlight t)
     (overlay-put overlay 'face 'difflayer-diff-added)))
 
@@ -206,12 +214,16 @@ When EVERYTHING is non-nil, clear all vars and overlays."
   (pcase difflayer-diff-style
     ('git (mapc #'difflayer--overlay-diff--git d))
     ('diff (mapc #'difflayer--overlay-diff--diff d))
+    ('git-char (difflayer--overlay-diff--git-char (nthcdr 4 d)))
     (_ nil))
   (setq difflayer--done t))
 
-;;;;;; type: git
+;;;;;; diff-type: git
 (defun difflayer--overlay-diff--git (line)
-  "Make overlays for a LINE from a git-style diff D."
+  "Make overlays for a LINE from a git-style diff D.
+This function doesn’t consider parse anything other than hunk info,
+which looks like the following:
+@@ -N[,N] +N[,N] @@"
   (when (= 64 (aref line 0))
     (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
            (buf2 (plist-get (cadr difflayer--metadata) :buffer))
@@ -224,9 +236,11 @@ When EVERYTHING is non-nil, clear all vars and overlays."
                     (butlast (cdr (split-string line)))))
            (a (+ l1 -1 (caar indices)))
            (b (cadar indices))
+           (ins (if b b 1))
            (b (if b (if (= 0 b) b (+ a -1 b)) a))
            (c (+ l2 -1 (caadr indices)))
            (d (cadadr indices))
+           (del (if d d 1))
            (d (if d (if (= 0 d) d (+ c -1 d)) c))
            (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
                                                      (forward-line (- l 1))
@@ -239,13 +253,114 @@ When EVERYTHING is non-nil, clear all vars and overlays."
           (difflayer--add-negative-overlay (funcall line-beg-pos a) (funcall line-end-pos b))))
       (when (/= 0 d)
         (with-current-buffer buf2
-          (difflayer--add-positive-overlay (funcall line-beg-pos c) (funcall line-end-pos d)))))))
+          (difflayer--add-positive-overlay (funcall line-beg-pos c) (funcall line-end-pos d))))
+      (difflayer--message ins del))))
 
-;;;;;; type: diff
+;;;;;; diff-type: diff
 (defun difflayer--overlay-diff--diff (line)
   "Make overlays for a LINE from a diff-style diff D."
   (difflayer--overlay-diff--git line))
 
+;;;;;; diff-type: git-word
+(defun difflayer--overlay-diff--git-char (d)
+  "Make overlays for git-char diff D."
+  ;; check for @@
+  ;; group in ~
+  ;; in groups, count words, add/del as neg numbers
+  ;; process list and send to highlight function
+  (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
+         (buf2 (plist-get (cadr difflayer--metadata) :buffer))
+         (p1 (car (plist-get (car difflayer--metadata) :bounds)))
+         (p2 (car (plist-get (cadr difflayer--metadata) :bounds)))
+         ;; (calc-indices ;; returns ((a b) (c d))
+         ;;  (lambda (line)
+         ;;    (mapcar (lambda (e) (mapcar #'string-to-number (split-string (substring e 1) ",")))
+         ;;            (butlast (cdr (split-string line))))))
+         (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
+                                                   (forward-line (- l 1))
+                                                   (line-beginning-position))))
+         (has-negative-p (lambda (l) (catch 'has-negative
+                                       (dolist (i l)
+                                         (when (< i 0) (throw 'has-negative t))
+                                         nil))))
+         (calc-pos (lambda (firstpos linenum)
+                     (message "calcpos firstpos:%s linenum:%s" firstpos linenum)
+                     (let ((l (line-number-at-pos firstpos)))
+                       (if (= 0 linenum)
+                           (max firstpos (funcall line-beg-pos l))
+                         (funcall line-beg-pos (+ linenum l))))))
+         (process-poslist (lambda (posl firstpos total neg?)
+                            (when (funcall has-negative-p posl)
+                              (setq posl (reverse posl))
+                              (if (> 0 (car posl)) (push 0 posl))
+                              (message "processing %s %s total:%s" neg? posl total)
+                              (let ((l) (acc 0) (total total))
+                                (dolist (n posl)
+                                  (if (> 0 n)
+                                      (progn (push (+ acc total) l)
+                                             (push (- (car l) n) l)
+                                             (setq total (car l))
+                                             (setq acc 0))
+                                    (setq acc (+ acc n)))
+                                  (message "in loop total:%s l:%s" total l))
+                                (message "l is %s" l)
+                                (setq l (reverse l))
+                                (while (< 1 (length l))
+                                  (if neg?
+                                      (difflayer--add-negative-overlay (car l) (cadr l))
+                                    (difflayer--add-positive-overlay (car l) (cadr l)))
+                                  (setq l (cddr l)))))))
+         (dline 0) ;; current line number
+         (neglist) ;; list of negative changes
+         (poslist));; list of positive changes
+    (mapc (lambda (line)
+            (pcase (aref line 0)
+              (64 (setq dline
+                        (1- (string-to-number
+                             (car (split-string (substring (cadr (split-string line)) 1) ","))))))
+              (43 (progn
+                    (push (- (1- (length line))) poslist)
+                    (message "processing pos %s of l %s" line (length line))))
+              (45 (progn
+                    (push (- (1- (length line))) neglist)
+                    (message "processing neg %s of l %s" line (length line))))
+              (126 (progn
+                     (message "poslist:%s neglist:%s dline:%s" poslist neglist dline)
+                     (with-current-buffer buf1
+                       (funcall process-poslist neglist p1 (funcall calc-pos p1 dline) t))
+                     (with-current-buffer buf2
+                       (funcall process-poslist poslist p2 (funcall calc-pos p2 dline) nil))
+                     (setq neglist nil poslist nil dline (1+ dline))))
+              (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist) (message "processing nil %s of l %s" line x))
+                  (length line)))))
+          d)))
+
+;; (-partition-by (lambda (x) (> x 0)) (list 5 5 -2 5 10 -2 2))
+;; (10 12 27 29 31)
+;; (let ((l)(acc 0)(total 0))
+;;   (dolist (n (list 5 5 -2 5 10 -2 2))
+;;     (if (> 0 n)
+;;         (progn
+;;           (push (+ acc total) l)
+;;           (push (- (car l) n) l)
+;;           (setq total (car l))
+;;           (setq acc 0))
+;;       (setq acc (+ acc n))))
+;;   (when (< 0 acc)
+;;     (push (+ total acc) l))
+;;   (message "%s" l))
+;; (let ((l)(acc 0)(total 0))
+;;   (dolist (n (list 5 5 -2 5 10 -2 2))
+;;     (if (> 0 n)
+;;         (progn
+;;           (push acc l)
+;;           (push (- acc n) l)
+;;           (setq acc 0))
+;;       (setq total (+ total n))
+;;       (setq acc (+ acc n))))
+;;   (when (< 0 acc)
+;;     (push (+ total acc) l))
+;;   (message "%s" l))
 ;;;;; Difflayer
 (defun difflayer (arg)
   "Select two regions and overlay their diffs on them.
@@ -270,4 +385,9 @@ If ARG is non-nil, clear all highlights."
 ;;; provide
 (provide 'difflayer)
 
+;;; TODO (maybe)
+;;;; git-word
+;;;; Check if the diff and git binaries exist
+;;;; Add a difflayer-reset function if the "arg" isn’t good enough
+;;;; Add option for overlay in fringe, maybe?  Or arrows on the right?
 ;;; difflayer.el ends here
