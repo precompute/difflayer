@@ -32,7 +32,7 @@
   "When non-nil, highlight selected regions."
   :type 'boolean :group 'difflayer)
 
-(defcustom difflayer-diff-style 'git
+(defcustom difflayer-diff-style 'git-char
   "Diff style to use.
 'diff     : GNU Diff
 'git      : git diff
@@ -264,18 +264,10 @@ which looks like the following:
 ;;;;;; diff-type: git-word
 (defun difflayer--overlay-diff--git-char (d)
   "Make overlays for git-char diff D."
-  ;; check for @@
-  ;; group in ~
-  ;; in groups, count words, add/del as neg numbers
-  ;; process list and send to highlight function
   (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
          (buf2 (plist-get (cadr difflayer--metadata) :buffer))
          (p1 (car (plist-get (car difflayer--metadata) :bounds)))
          (p2 (car (plist-get (cadr difflayer--metadata) :bounds)))
-         ;; (calc-indices ;; returns ((a b) (c d))
-         ;;  (lambda (line)
-         ;;    (mapcar (lambda (e) (mapcar #'string-to-number (split-string (substring e 1) ",")))
-         ;;            (butlast (cdr (split-string line))))))
          (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
                                                    (forward-line (- l 1))
                                                    (line-beginning-position))))
@@ -284,7 +276,6 @@ which looks like the following:
                                          (when (< i 0) (throw 'has-negative t))
                                          nil))))
          (calc-pos (lambda (firstpos linenum)
-                     (message "calcpos firstpos:%s linenum:%s" firstpos linenum)
                      (let ((l (line-number-at-pos firstpos)))
                        (if (= 0 linenum)
                            (max firstpos (funcall line-beg-pos l))
@@ -293,7 +284,6 @@ which looks like the following:
                             (when (funcall has-negative-p posl)
                               (setq posl (reverse posl))
                               (if (> 0 (car posl)) (push 0 posl))
-                              (message "processing %s %s total:%s" neg? posl total)
                               (let ((l) (acc 0) (total total))
                                 (dolist (n posl)
                                   (if (> 0 n)
@@ -301,9 +291,7 @@ which looks like the following:
                                              (push (- (car l) n) l)
                                              (setq total (car l))
                                              (setq acc 0))
-                                    (setq acc (+ acc n)))
-                                  (message "in loop total:%s l:%s" total l))
-                                (message "l is %s" l)
+                                    (setq acc (+ acc n))))
                                 (setq l (reverse l))
                                 (while (< 1 (length l))
                                   (if neg?
@@ -317,50 +305,20 @@ which looks like the following:
             (pcase (aref line 0)
               (64 (setq dline
                         (1- (string-to-number
-                             (car (split-string (substring (cadr (split-string line)) 1) ","))))))
-              (43 (progn
-                    (push (- (1- (length line))) poslist)
-                    (message "processing pos %s of l %s" line (length line))))
-              (45 (progn
-                    (push (- (1- (length line))) neglist)
-                    (message "processing neg %s of l %s" line (length line))))
+                             (car (split-string (substring (cadr (split-string line)) 1)
+                                                ","))))))
+              (43 (push (- (1- (length line))) poslist))
+              (45 (push (- (1- (length line))) neglist))
               (126 (progn
-                     (message "poslist:%s neglist:%s dline:%s" poslist neglist dline)
                      (with-current-buffer buf1
                        (funcall process-poslist neglist p1 (funcall calc-pos p1 dline) t))
                      (with-current-buffer buf2
                        (funcall process-poslist poslist p2 (funcall calc-pos p2 dline) nil))
                      (setq neglist nil poslist nil dline (1+ dline))))
-              (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist) (message "processing nil %s of l %s" line x))
+              (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist))
                   (length line)))))
           d)))
 
-;; (-partition-by (lambda (x) (> x 0)) (list 5 5 -2 5 10 -2 2))
-;; (10 12 27 29 31)
-;; (let ((l)(acc 0)(total 0))
-;;   (dolist (n (list 5 5 -2 5 10 -2 2))
-;;     (if (> 0 n)
-;;         (progn
-;;           (push (+ acc total) l)
-;;           (push (- (car l) n) l)
-;;           (setq total (car l))
-;;           (setq acc 0))
-;;       (setq acc (+ acc n))))
-;;   (when (< 0 acc)
-;;     (push (+ total acc) l))
-;;   (message "%s" l))
-;; (let ((l)(acc 0)(total 0))
-;;   (dolist (n (list 5 5 -2 5 10 -2 2))
-;;     (if (> 0 n)
-;;         (progn
-;;           (push acc l)
-;;           (push (- acc n) l)
-;;           (setq acc 0))
-;;       (setq total (+ total n))
-;;       (setq acc (+ acc n))))
-;;   (when (< 0 acc)
-;;     (push (+ total acc) l))
-;;   (message "%s" l))
 ;;;;; Difflayer
 (defun difflayer (arg)
   "Select two regions and overlay their diffs on them.
@@ -390,4 +348,5 @@ If ARG is non-nil, clear all highlights."
 ;;;; Check if the diff and git binaries exist
 ;;;; Add a difflayer-reset function if the "arg" isn’t good enough
 ;;;; Add option for overlay in fringe, maybe?  Or arrows on the right?
+;;;; Use pcase-let* in difflayer--overlay-diff--git
 ;;; difflayer.el ends here
