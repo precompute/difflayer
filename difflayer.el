@@ -166,7 +166,6 @@ When EVERYTHING is non-nil, clear all vars and overlays."
 (defun difflayer--add-negative-overlay (beg end)
   "Add an overlay that shows removal of content between BEG and END."
   (let ((overlay (make-overlay beg end)))
-    (message "neg overlay %s to %s" beg end)
     (overlay-put overlay 'difflayer-highlight t)
     (overlay-put overlay 'face 'difflayer-diff-removed)))
 
@@ -174,7 +173,6 @@ When EVERYTHING is non-nil, clear all vars and overlays."
 (defun difflayer--add-positive-overlay (beg end)
   "Add an overlay that shows addition of content between BEG and END."
   (let ((overlay (make-overlay beg end)))
-    (message "pos overlay %s to %s" beg end)
     (overlay-put overlay 'difflayer-highlight t)
     (overlay-put overlay 'face 'difflayer-diff-added)))
 
