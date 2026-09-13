@@ -6,7 +6,7 @@
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
 ;; Modified: September 14, 2026
-;; Version: 0.4.0
+;; Version: 0.5.0
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -32,13 +32,14 @@
   "When non-nil, highlight selected regions."
   :type 'boolean :group 'difflayer)
 
-(defcustom difflayer-diff-style 'git-char
+(defcustom difflayer-diff-style 'git-word
   "Diff style to use.
-'diff     : GNU Diff
-'git      : git diff
-'git-char : git diff with char-level diff"
+diff     : GNU Diff
+git      : git diff (line)
+git-word : git diff (word)
+git-char : git diff (char)"
   :type 'symbol :group 'difflayer
-  :options (list 'diff 'git 'git-char))
+  :options (list 'diff 'git 'git-char 'git-word))
 
 (defcustom difflayer-deactivate-mark t
   "When non-nil, mark is deactivated after a region is selected."
@@ -64,7 +65,7 @@ Keys: :bounds :overlay :buffer")
   (list 'ediff ""
         'diff (list "diff" "-s" "-U0")
         'git (list "git" "--no-pager" "diff" "--no-index" "-U0")
-        'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain")
+        'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain" "--word-diff-regex=[^[:space:]]+|[[:space:]]+")
         'git-char (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain" "--word-diff-regex=."))
   "Commands associated with `difflayer-diff-style’.")
 
@@ -233,6 +234,7 @@ When EVERYTHING is non-nil, clear all vars and overlays."
   (pcase difflayer-diff-style
     ('git (mapc #'difflayer--overlay-diff--git d))
     ('diff (mapc #'difflayer--overlay-diff--diff d))
+    ('git-word (difflayer--overlay-diff--git-word (nthcdr 4 d)))
     ('git-char (difflayer--overlay-diff--git-char (nthcdr 4 d)))
     (_ nil))
   (setq difflayer--done t))
@@ -322,13 +324,13 @@ which looks like the following:
          (poslist));; list of positive changes
     (mapc (lambda (line)
             (pcase (aref line 0)
-              (64 (setq dline
+              (?@ (setq dline
                         (1- (string-to-number
                              (car (split-string (substring (cadr (split-string line)) 1)
                                                 ","))))))
-              (43 (push (- (1- (length line))) poslist))
-              (45 (push (- (1- (length line))) neglist))
-              (126 (progn
+              (?+ (push (- (1- (length line))) poslist))
+              (?- (push (- (1- (length line))) neglist))
+             (?~ (progn
                      (with-current-buffer buf1
                        (funcall process-poslist neglist p1 (funcall calc-pos p1 dline) t))
                      (with-current-buffer buf2
@@ -337,6 +339,11 @@ which looks like the following:
               (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist))
                   (length line)))))
           d)))
+
+;;;;;; diff-type: git-word
+(defun difflayer--overlay-diff--git-word (d)
+  "Make overlays for git-word diff D."
+  (difflayer--overlay-diff--git-char d))
 
 ;;;;; Difflayer
 (defun difflayer (arg)
@@ -370,11 +377,16 @@ With \\[universal-argument] \\[universal-argument], clear all state set by diffl
             (1 (difflayer--overlay-diff d))
             (_ (message "Difflayer: %s exit: %s" difflayer-diff-style difflayer--exit-code))))))))
 
+(defun difflayer-reset ()
+  "Reset Difflayer overlays and state.
+Alternative: \\[universal-argument] \\[universal-argument] `difflayer'."
+  (interactive)
+  (difflayer--clear-vars t))
+
 ;;; provide
 (provide 'difflayer)
 
 ;;; TODO (maybe)
-;;;; git-word
 ;;;; Add a difflayer-reset function if the "arg" isn’t good enough
 ;;;; Use pcase-let* in difflayer--overlay-diff--git
 ;;; difflayer.el ends here

@@ -5,4 +5,14 @@ Select two regions and view their diff as overlays.
 
 Bind =difflayer= to a convenient key.  Select a region and call =difflayer=.  Repeat again, and then call difflayer again.
 
-To remove overlays, call difflayer with a prefix argument (=C-u M-x difflayer=).
+To select diff style, call difflayer with a prefix argument (=C-u M-x difflayer=).
+
+To remove overlays, call difflayer with a prefix argument (=C-u C-u M-x difflayer=).
+
+Supported Diff Styles:
+- GNU Diff
+- Git Diff (Line)
+- Git Diff (Word)
+- Git Diff (Char)
+
+This package requires the ~diff~ and ~git~ binaries.
