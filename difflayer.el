@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: May 31, 2025
-;; Version: 0.2.0
+;; Modified: September 14, 2026
+;; Version: 0.4.0
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -48,6 +48,10 @@
   "When non-nil, selecting more than one region overwrites the most recent selection."
   :type 'boolean :group 'difflayer)
 
+(defcustom difflayer-do-not-check-for-binaries nil
+  "When non-nil, difflayer will not check for git / diff binaries."
+  :type 'boolean :group 'difflayer)
+
 ;;;; Internal
 (defvar difflayer--current-diff nil
   "Stores the current diff output.")
@@ -83,7 +87,22 @@ Keys: :bounds :overlay :buffer")
   '((t :inherit 'diff-removed))
   "Face for highlighting deleted parts of text.")
 
+(defface difflayer-rule-face-1
+  '((t :underline t :extend t))
+  "Face for horizontal rule before selection regions.")
+
+(defface difflayer-rule-face
+  '((t :overline t :extend t))
+  "Face for horizontal rule after selection regions.")
+
 ;;;; Functions
+;;;;; Check for binaries
+(defun difflayer--check-for-binaries ()
+  "Check if the 'diff' and 'git' binaries exist on this system."
+  (unless (and (executable-find "diff")
+               (executable-find "git"))
+    (error "Difflayer couldn't find the 'git' and/or 'diff' binaries.")))
+
 ;;;;; Register
 (defun difflayer--register-region (&optional metadata)
   "Register the currently active region.
@@ -132,6 +151,8 @@ When EVERYTHING is non-nil, clear all vars and overlays."
                                  (cdr (plist-get metadata :bounds)))))
       (overlay-put overlay 'difflayer-highlight t)
       (overlay-put overlay 'face 'difflayer-highlight-face)
+      (overlay-put overlay 'before-string (propertize " " 'display '(space :align-to right) 'face 'difflayer-rule-face-1))
+      (overlay-put overlay 'after-string (propertize " " 'display '(space :align-to right) 'face 'difflayer-rule-face))
       (plist-put metadata :overlay overlay))))
 
 (defun difflayer--add-all-selection-overlays ()
@@ -222,7 +243,7 @@ When EVERYTHING is non-nil, clear all vars and overlays."
 This function doesn’t consider parse anything other than hunk info,
 which looks like the following:
 @@ -N[,N] +N[,N] @@"
-  (when (= 64 (aref line 0))
+  (when (= ?@ (aref line 0))
     (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
            (buf2 (plist-get (cadr difflayer--metadata) :buffer))
            (l1 (with-current-buffer buf1
@@ -259,7 +280,7 @@ which looks like the following:
   "Make overlays for a LINE from a diff-style diff D."
   (difflayer--overlay-diff--git line))
 
-;;;;;; diff-type: git-word
+;;;;;; diff-type: git-char
 (defun difflayer--overlay-diff--git-char (d)
   "Make overlays for git-char diff D."
   (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
@@ -322,29 +343,38 @@ which looks like the following:
   "Select two regions and overlay their diffs on them.
 Select a region and call this function.  Repeat for the second region.
 Call when region is inactive to diff the two previously selected regions.
-If ARG is non-nil, clear all highlights."
+Without a prefix ARG, use the diff style set in `difflayer-diff-style'.
+With \\[universal-argument], allow dynamically choosing diff style.
+With \\[universal-argument] \\[universal-argument], clear all state set by difflayer."
   (interactive "P")
-  (if arg (difflayer--clear-vars t))
-  (if difflayer--done (difflayer--clear-vars t))
-  (if (region-active-p)
-      (difflayer--register-region)
-    (if (/= 2 (length difflayer--metadata))
-        (message "Difflayer needs 2 regions to work.  You have registered %s."
-                 (length difflayer--metadata))
-      (difflayer--remove-all-selection-overlays)
-      (let ((d (difflayer--get-diff)))
-        (pcase difflayer--exit-code
-          (0 (message "Diff (%s): Regions are identical." difflayer-diff-style))
-          (1 (difflayer--overlay-diff d))
-          (_ (message "Difflayer: %s exit: %s" difflayer-diff-style difflayer--exit-code)))))))
+  (let ((difflayer-diff-style difflayer-diff-style))
+    (cond ((= 4 (prefix-numeric-value arg))
+           (setq difflayer-diff-style
+                 (intern (completing-read
+                          "Diff Style:"
+                          (caddr (custom-variable-type 'difflayer-diff-style))
+                          nil t))))
+          ((= 16 (prefix-numeric-value arg))
+           (difflayer--clear-vars t)))
+    (if difflayer--done (difflayer--clear-vars t))
+    (if (region-active-p)
+        (difflayer--register-region)
+      (if (/= 2 (length difflayer--metadata))
+          (message "Difflayer needs 2 regions to work.  You have registered %s."
+                   (length difflayer--metadata))
+        (unless difflayer-do-not-check-for-binaries (difflayer--check-for-binaries))
+        (difflayer--remove-all-selection-overlays)
+        (let ((d (difflayer--get-diff)))
+          (pcase difflayer--exit-code
+            (0 (message "Diff (%s): Regions are identical." difflayer-diff-style))
+            (1 (difflayer--overlay-diff d))
+            (_ (message "Difflayer: %s exit: %s" difflayer-diff-style difflayer--exit-code))))))))
 
 ;;; provide
 (provide 'difflayer)
 
 ;;; TODO (maybe)
 ;;;; git-word
-;;;; Check if the diff and git binaries exist
 ;;;; Add a difflayer-reset function if the "arg" isn’t good enough
-;;;; Add option for overlay in fringe, maybe?  Or arrows on the right?
 ;;;; Use pcase-let* in difflayer--overlay-diff--git
 ;;; difflayer.el ends here
