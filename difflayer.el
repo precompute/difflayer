@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: September 14, 2026
-;; Version: 0.5.0
+;; Modified: September 17, 2026
+;; Version: 0.5.1
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -46,7 +46,7 @@ git-char : git diff (char)"
   :type 'boolean :group 'difflayer)
 
 (defcustom difflayer-preserve-first-selection nil
-  "When non-nil, selecting more than one region overwrites the most recent selection."
+  "When non-nil, selections are FILO."
   :type 'boolean :group 'difflayer)
 
 (defcustom difflayer-do-not-check-for-binaries nil
@@ -77,29 +77,34 @@ Keys: :bounds :overlay :buffer")
 
 ;;;; Faces
 (defface difflayer-highlight-face
-  '((t :inherit 'highlight))
-  "Face for highlighting selected regions.")
+  '((t :inherit highlight))
+  "Face for highlighting selected regions."
+  :group 'difflayer)
 
 (defface difflayer-diff-added
-  '((t :inherit 'diff-added))
-  "Face for highlighting new parts of text.")
+  '((t :inherit diff-added))
+  "Face for highlighting new parts of text."
+  :group 'difflayer)
 
 (defface difflayer-diff-removed
-  '((t :inherit 'diff-removed))
-  "Face for highlighting deleted parts of text.")
+  '((t :inherit diff-removed))
+  "Face for highlighting deleted parts of text."
+  :group 'difflayer)
 
 (defface difflayer-rule-face-1
   '((t :underline t :extend t))
-  "Face for horizontal rule before selection regions.")
+  "Face for horizontal rule before selection regions."
+  :group 'difflayer)
 
 (defface difflayer-rule-face
   '((t :overline t :extend t))
-  "Face for horizontal rule after selection regions.")
+  "Face for horizontal rule after selection regions."
+  :group 'difflayer)
 
 ;;;; Functions
 ;;;;; Check for binaries
 (defun difflayer--check-for-binaries ()
-  "Check if the 'diff' and 'git' binaries exist on this system."
+  "Check whether the diff and git binaries exist on this system."
   (unless (and (executable-find "diff")
                (executable-find "git"))
     (error "Difflayer couldn't find the 'git' and/or 'diff' binaries.")))
@@ -130,7 +135,6 @@ Use METADATA (:bounds :buffer) if specified."
 When EVERYTHING is non-nil, clear all vars and overlays."
   (setq difflayer--metadata nil)
   (setq difflayer--exit-code nil)
-  (setq difflayer--current-line nil)
   (when everything
     (setq difflayer--current-diff nil)
     (setq difflayer--done nil)
@@ -301,7 +305,7 @@ which looks like the following:
                        (if (= 0 linenum)
                            (max firstpos (funcall line-beg-pos l))
                          (funcall line-beg-pos (+ linenum l))))))
-         (process-poslist (lambda (posl firstpos total neg?)
+         (process-poslist (lambda (posl total neg?)
                             (when (funcall has-negative-p posl)
                               (setq posl (reverse posl))
                               (if (> 0 (car posl)) (push 0 posl))
@@ -330,12 +334,12 @@ which looks like the following:
                                                 ","))))))
               (?+ (push (- (1- (length line))) poslist))
               (?- (push (- (1- (length line))) neglist))
-             (?~ (progn
-                     (with-current-buffer buf1
-                       (funcall process-poslist neglist p1 (funcall calc-pos p1 dline) t))
-                     (with-current-buffer buf2
-                       (funcall process-poslist poslist p2 (funcall calc-pos p2 dline) nil))
-                     (setq neglist nil poslist nil dline (1+ dline))))
+              (?~ (progn
+                    (with-current-buffer buf1
+                      (funcall process-poslist neglist (funcall calc-pos p1 dline) t))
+                    (with-current-buffer buf2
+                      (funcall process-poslist poslist (funcall calc-pos p2 dline) nil))
+                    (setq neglist nil poslist nil dline (1+ dline))))
               (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist))
                   (length line)))))
           d)))
