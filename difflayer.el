@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: September 17, 2026
-;; Version: 0.5.1
+;; Modified: October 11, 2026
+;; Version: 0.5.2
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -75,6 +75,9 @@ Keys: :bounds :overlay :buffer")
 (defvar difflayer--done nil
   "States whether difflayer has diffed two regions.")
 
+(defvar difflayer--cached-binary-status 'unchecked
+  "Cache the result of `difflayer--check-for-binaries'.")
+
 ;;;; Faces
 (defface difflayer-highlight-face
   '((t :inherit highlight))
@@ -105,9 +108,14 @@ Keys: :bounds :overlay :buffer")
 ;;;;; Check for binaries
 (defun difflayer--check-for-binaries ()
   "Check whether the diff and git binaries exist on this system."
-  (unless (and (executable-find "diff")
-               (executable-find "git"))
-    (error "Difflayer couldn't find the 'git' and/or 'diff' binaries.")))
+  (if (eq difflayer--cached-binary-status 'unchecked)
+      (if (and (executable-find "git") (executable-find "diff"))
+          (setq difflayer--cached-binary-status 'found)
+        (setq difflayer--cached-binary-status 'notfound)
+        (error "Difflayer couldn't find the 'git' and/or 'diff' binaries."))
+    (when (eq difflayer--cached-binary-status 'notfound)
+      (error "Difflayer couldn't find the 'git' and/or 'diff' binaries."))))
+;; Maybe `error' is too heavy?
 
 ;;;;; Register
 (defun difflayer--register-region (&optional metadata)
@@ -359,15 +367,14 @@ With \\[universal-argument], allow dynamically choosing diff style.
 With \\[universal-argument] \\[universal-argument], clear all state set by difflayer."
   (interactive "P")
   (let ((difflayer-diff-style difflayer-diff-style))
-    (cond ((= 4 (prefix-numeric-value arg))
+    (cond ((or difflayer--done (= 16 (prefix-numeric-value arg)))
+           (difflayer--clear-vars t))
+          ((= 4 (prefix-numeric-value arg))
            (setq difflayer-diff-style
                  (intern (completing-read
                           "Diff Style:"
                           (caddr (custom-variable-type 'difflayer-diff-style))
-                          nil t))))
-          ((= 16 (prefix-numeric-value arg))
-           (difflayer--clear-vars t)))
-    (if difflayer--done (difflayer--clear-vars t))
+                          nil t)))))
     (if (region-active-p)
         (difflayer--register-region)
       (if (/= 2 (length difflayer--metadata))
