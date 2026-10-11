@@ -275,18 +275,14 @@ When END? is non-nil, return position at the end of LINE."
   "Call `difflayer--pos-bol' with END? set to t."
   (difflayer--pos-bol line t))
 
-(defun difflayer--first-region-line-number-beg (buf &optional second-region?)
-  "Get line number for the beginning of the first region from `difflayer--metadata'.
-When SECOND-REGION? is non-nil, return line number of the beginning of the second region."
-  (with-current-buffer buf
-    (line-number-at-pos (car (plist-get
-                              (if second-region?
-                                  (cadr difflayer--metadata)
-                                (car difflayer--metadata)) :bounds)))))
+(defun difflayer--region-pos-beg (n)
+  "Get the beginning position for N in `difflayer--metadata'."
+  (car (plist-get (nth n difflayer--metadata) :bounds)))
 
-(defun difflayer--second-region-line-number-beg (buf)
-  "Run `difflayer--first-region-line-number-beg' with SECOND-REGION? set to t."
-  (difflayer--first-region-line-number-beg buf t))
+(defun difflayer--region-line-number-beg (buf n)
+  "In buffer BUF, get line number for the beginning of region N from `difflayer--metadata'."
+  (with-current-buffer buf
+    (line-number-at-pos (difflayer--region-pos-beg n))))
 
 ;;;;;; diff-type: git
 (defun difflayer--overlay-diff--git (line)
@@ -297,11 +293,11 @@ This function doesn’t consider anything but hunk info."
            (b1 (plist-get (car difflayer--metadata) :buffer))
            (b2 (plist-get (cadr difflayer--metadata) :buffer))
            (b1beg (+ -1 (nth 0 hunkinfo)
-                     (difflayer--first-region-line-number-beg b1)))
+                     (difflayer--region-line-number-beg b1 0)))
            (b1end (let ((z (nth 1 hunkinfo)))
                     (if (= 0 z) b1beg (+ z b1beg -1))))
            (b2beg (+ -1 (nth 2 hunkinfo)
-                     (difflayer--second-region-line-number-beg b2)))
+                     (difflayer--region-line-number-beg b2 1)))
            (b2end (let ((z (nth 3 hunkinfo)))
                     (if (= 0 z) b2beg (+ z b2beg -1)))))
       (with-current-buffer b1
