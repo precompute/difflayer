@@ -251,43 +251,57 @@ When EVERYTHING is non-nil, clear all vars and overlays."
     (_ nil))
   (setq difflayer--done t))
 
+;;;;;; Helper Functions
+(defun difflayer--parse-hunk-info (hi)
+  "Parse hunk info HI and return a list of four integers.
+Hunk info looks like the following:
+@@ -N[,N] +N[,N] @@
+We assume the user has supplied the correct line."
+  (mapcan (lambda (z)
+            (let ((y (split-string z ",")))
+              (list (string-to-number (car y))
+                    (if (= 1 (length y)) 0 (string-to-number (cadr y))))))
+          (let ((z (split-string hi)))
+            (list (substring (nth 1 z) 1)
+                  (substring (nth 2 z) 1)))))
+
+(defun difflayer--pos-bol (line &optional end?)
+  "Return the position at the beginning of LINE.
+When END? is non-nil, return position at the end of LINE."
+  (save-excursion (goto-char (point-min))
+                  (if end? (pos-eol line) (pos-bol line))))
+
+(defun difflayer--pos-eol (line)
+  "Call `difflayer--pos-bol' with END? set to t."
+  (difflayer--pos-bol line t))
+
 ;;;;;; diff-type: git
 (defun difflayer--overlay-diff--git (line)
   "Make overlays for a LINE from a git-style diff D.
-This function doesn’t consider parse anything other than hunk info,
-which looks like the following:
-@@ -N[,N] +N[,N] @@"
+This function doesn’t consider anything but hunk info."
   (when (= ?@ (aref line 0))
-    (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
-           (buf2 (plist-get (cadr difflayer--metadata) :buffer))
-           (l1 (with-current-buffer buf1
-                 (line-number-at-pos (car (plist-get (car difflayer--metadata) :bounds)))))
-           (l2 (with-current-buffer buf2
-                 (line-number-at-pos (car (plist-get (cadr difflayer--metadata) :bounds)))))
-           (indices ;; returns ((a b) (c d))
-            (mapcar (lambda (e) (mapcar #'string-to-number (split-string (substring e 1) ",")))
-                    (butlast (cdr (split-string line)))))
-           (a (+ l1 -1 (caar indices)))
-           (b (cadar indices))
-           (ins (if b b 1))
-           (b (if b (if (= 0 b) b (+ a -1 b)) a))
-           (c (+ l2 -1 (caadr indices)))
-           (d (cadadr indices))
-           (del (if d d 1))
-           (d (if d (if (= 0 d) d (+ c -1 d)) c))
-           (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
-                                                     (forward-line (- l 1))
-                                                     (line-beginning-position))))
-           (line-end-pos (lambda (l) (save-excursion (goto-char (point-min))
-                                                     (forward-line (- l 1))
-                                                     (line-end-position)))))
-      (when (/= 0 b)
-        (with-current-buffer buf1
-          (difflayer--add-negative-overlay (funcall line-beg-pos a) (funcall line-end-pos b))))
-      (when (/= 0 d)
-        (with-current-buffer buf2
-          (difflayer--add-positive-overlay (funcall line-beg-pos c) (funcall line-end-pos d))))
-      (difflayer--message ins del))))
+    (let* ((hunkinfo (difflayer--parse-hunk-info line))
+           (b1 (plist-get (car difflayer--metadata) :buffer))
+           (b2 (plist-get (cadr difflayer--metadata) :buffer))
+           (b1beg (+ -1 (nth 0 hunkinfo)
+                     (with-current-buffer b1
+                       (line-number-at-pos
+                        (car (plist-get (car difflayer--metadata) :bounds))))))
+           (b1end (let ((z (nth 1 hunkinfo)))
+                    (if (= 0 z) b1beg (+ z b1beg -1))))
+           (b2beg (+ -1 (nth 2 hunkinfo)
+                     (with-current-buffer b2
+                       (line-number-at-pos
+                        (car (plist-get (cadr difflayer--metadata) :bounds))))))
+           (b2end (let ((z (nth 3 hunkinfo)))
+                    (if (= 0 z) b2beg (+ z b2beg -1)))))
+      (with-current-buffer b1
+        (difflayer--add-negative-overlay
+         (difflayer--pos-bol b1beg) (difflayer--pos-eol b1end)))
+      (with-current-buffer b2
+        (difflayer--add-positive-overlay
+         (difflayer--pos-bol b2beg) (difflayer--pos-eol b2end)))
+      (difflayer--message (1+ (- b1end b1beg)) (1+ (- b2end b2beg))))))
 
 ;;;;;; diff-type: diff
 (defun difflayer--overlay-diff--diff (line)
@@ -399,5 +413,4 @@ Alternative: \\[universal-argument] \\[universal-argument] `difflayer'."
 
 ;;; TODO (maybe)
 ;;;; Add a difflayer-reset function if the "arg" isn’t good enough
-;;;; Use pcase-let* in difflayer--overlay-diff--git
 ;;; difflayer.el ends here
