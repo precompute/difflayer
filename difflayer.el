@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: October 11, 2026
-;; Version: 0.5.3
+;; Modified: October 12, 2026
+;; Version: 0.6.0
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -265,22 +265,26 @@ We assume the user has supplied the correct line."
             (list (substring (nth 1 z) 1)
                   (substring (nth 2 z) 1)))))
 
-(defun difflayer--pos-bol (line &optional end?)
+(defun difflayer--pos-bol (line &optional end? buf)
   "Return the position at the beginning of LINE.
-When END? is non-nil, return position at the end of LINE."
-  (save-excursion (goto-char (point-min))
-                  (if end? (pos-eol line) (pos-bol line))))
+When END? is non-nil, return position at the end of LINE.
+When BUF is non-nil, use buffer BUF."
+  (with-current-buffer (or buf (current-buffer))
+    (save-excursion (goto-char (point-min))
+                    (if end? (pos-eol line) (pos-bol line)))))
 
 (defun difflayer--pos-eol (line)
   "Call `difflayer--pos-bol' with END? set to t."
   (difflayer--pos-bol line t))
 
-(defun difflayer--region-pos-beg (n)
-  "Get the beginning position for N in `difflayer--metadata'."
-  (car (plist-get (nth n difflayer--metadata) :bounds)))
+(defun difflayer--region-pos-beg (&optional n)
+  "Get the beginning position for the first entry in `difflayer--metadata'.
+When N is non-nil, use the second entry instead."
+  (car (plist-get (nth (if n 1 0) difflayer--metadata) :bounds)))
 
-(defun difflayer--region-line-number-beg (buf n)
-  "In buffer BUF, get line number for the beginning of region N from `difflayer--metadata'."
+(defun difflayer--region-line-number-beg (buf &optional n)
+  "In buffer BUF, get line number for the beginning of the first region from `difflayer--metadata'.
+When N is non-nil, use the second region instead."
   (with-current-buffer buf
     (line-number-at-pos (difflayer--region-pos-beg n))))
 
@@ -293,11 +297,11 @@ This function doesn’t consider anything but hunk info."
            (b1 (plist-get (car difflayer--metadata) :buffer))
            (b2 (plist-get (cadr difflayer--metadata) :buffer))
            (b1beg (+ -1 (nth 0 hunkinfo)
-                     (difflayer--region-line-number-beg b1 0)))
+                     (difflayer--region-line-number-beg b1)))
            (b1end (let ((z (nth 1 hunkinfo)))
                     (if (= 0 z) b1beg (+ z b1beg -1))))
            (b2beg (+ -1 (nth 2 hunkinfo)
-                     (difflayer--region-line-number-beg b2 1)))
+                     (difflayer--region-line-number-beg b2 t)))
            (b2end (let ((z (nth 3 hunkinfo)))
                     (if (= 0 z) b2beg (+ z b2beg -1)))))
       (with-current-buffer b1
@@ -318,95 +322,38 @@ This function doesn’t consider anything but hunk info."
   "Make overlays for git-char diff D."
   (let* ((b1 (plist-get (car difflayer--metadata) :buffer)) ;; buffers 1 and 2
          (b2 (plist-get (cadr difflayer--metadata) :buffer))
-         (hunkinfo nil) ;; Diff Hunk Info
-         (r1c 0) ;; Counters for regions 1 and 2
-         (r2c 0)
-         r1delta r2delta ;; lists with changes for regions
-         )
-    (mapc (lambda (line)
-            (pcase (aref line 0)
-              (?@ (setq r1c 0 r2c 0 hunkinfo (difflayer--parse-hunk-info line)))
-              (?- (push (- (1- (length line))) r1delta))
-              (?+ (push (- (1- (length line))) r2delta))
-              (?  (let ((z (1- (length line)))) (push z r1delta) (push z r2delta)))
-              (?~ (with-current-buffer b1
-                    (let* ((startline (+ r1c (nth 0 hunkinfo) -1
-                                         (difflayer--first-region-line-number-beg b1)))
-                           (startpos (difflayer--pos-bol startline)))
-                      (mapc (lambda (z)
-                              (if (> z 0) (setq startpos (+ startpos z))
-                                (difflayer--add-negative-overlay startpos (- startpos z))
-                                (setq startpos (- startpos z))))
-                            (reverse r1delta))))
-                  (with-current-buffer b2
-                    (let* ((startline (+ r2c (nth 2 hunkinfo) -1
-                                         (difflayer--second-region-line-number-beg b2)))
-                           (startpos (difflayer--pos-bol startline)))
-                      (mapc (lambda (z)
-                              (if (> z 0) (setq startpos (+ startpos z))
-                                (difflayer--add-positive-overlay startpos (- startpos z))
-                                (setq startpos (- startpos z))))
-                            (reverse r2delta))))
-                  (setq r1c (1+ r1c) r2c (1+ r2c) r1delta nil r2delta nil))
-              (_)))
-          d)))
-
-;; (defun difflayer--overlay-diff--git-char (d)
-;;   "Make overlays for git-char diff D."
-;;   (let* ((buf1 (plist-get (car difflayer--metadata) :buffer))
-;;          (buf2 (plist-get (cadr difflayer--metadata) :buffer))
-;;          (p1 (car (plist-get (car difflayer--metadata) :bounds)))
-;;          (p2 (car (plist-get (cadr difflayer--metadata) :bounds)))
-;;          (line-beg-pos (lambda (l) (save-excursion (goto-char (point-min))
-;;                                                    (forward-line (- l 1))
-;;                                                    (line-beginning-position))))
-;;          (has-negative-p (lambda (l) (catch 'has-negative
-;;                                        (dolist (i l)
-;;                                          (when (< i 0) (throw 'has-negative t))
-;;                                          nil))))
-;;          (calc-pos (lambda (firstpos linenum)
-;;                      (let ((l (line-number-at-pos firstpos)))
-;;                        (if (= 0 linenum)
-;;                            (max firstpos (funcall line-beg-pos l))
-;;                          (funcall line-beg-pos (+ linenum l))))))
-;;          (process-poslist (lambda (posl total neg?)
-;;                             (when (funcall has-negative-p posl)
-;;                               (setq posl (reverse posl))
-;;                               (if (> 0 (car posl)) (push 0 posl))
-;;                               (let ((l) (acc 0) (total total))
-;;                                 (dolist (n posl)
-;;                                   (if (> 0 n)
-;;                                       (progn (push (+ acc total) l)
-;;                                              (push (- (car l) n) l)
-;;                                              (setq total (car l))
-;;                                              (setq acc 0))
-;;                                     (setq acc (+ acc n))))
-;;                                 (setq l (reverse l))
-;;                                 (while (< 1 (length l))
-;;                                   (if neg?
-;;                                       (difflayer--add-negative-overlay (car l) (cadr l))
-;;                                     (difflayer--add-positive-overlay (car l) (cadr l)))
-;;                                   (setq l (cddr l)))))))
-;;          (dline 0) ;; current line number
-;;          (neglist) ;; list of negative changes
-;;          (poslist));; list of positive changes
-;;     (mapc (lambda (line)
-;;             (pcase (aref line 0)
-;;               (?@ (setq dline
-;;                         (1- (string-to-number
-;;                              (car (split-string (substring (cadr (split-string line)) 1)
-;;                                                 ","))))))
-;;               (?+ (push (- (1- (length line))) poslist))
-;;               (?- (push (- (1- (length line))) neglist))
-;;               (?~ (progn
-;;                     (with-current-buffer buf1
-;;                       (funcall process-poslist neglist (funcall calc-pos p1 dline) t))
-;;                     (with-current-buffer buf2
-;;                       (funcall process-poslist poslist (funcall calc-pos p2 dline) nil))
-;;                     (setq neglist nil poslist nil dline (1+ dline))))
-;;               (_ ((lambda (x) (push (1- x) poslist) (push (1- x) neglist))
-;;                   (length line)))))
-;;           d)))
+         (s1 (difflayer--region-pos-beg))
+         (s2 (difflayer--region-pos-beg t))
+         (l1 (difflayer--region-line-number-beg b1))
+         (l2 (difflayer--region-line-number-beg b2 t))
+         p1 p2 ;; positions for regions 1 and 2
+         (newlinep (lambda (buf pos) (with-current-buffer buf (eq (char-after pos) ?\n)))))
+    (dolist (line d)
+      (pcase (aref line 0)
+        (?@ (let ((hunkinfo (difflayer--parse-hunk-info line)))
+              (setq p1 (max s1 (difflayer--pos-bol
+                                (+ -1 (nth 0 hunkinfo)
+                                   (difflayer--region-line-number-beg b1))
+                                nil b1))
+                    p2 (max s2 (difflayer--pos-bol
+                                (+ -1 (nth 2 hunkinfo)
+                                   (difflayer--region-line-number-beg b2 t))
+                                nil b2)))))
+        (?- (when p1
+              (let ((z (1- (length line))))
+                (with-current-buffer b1 (difflayer--add-negative-overlay p1 (+ p1 z)))
+                (setq p1 (+ p1 z)))))
+        (?+ (when p2
+              (let ((z (1- (length line))))
+                (with-current-buffer b2 (difflayer--add-positive-overlay p2 (+ p2 z)))
+                (setq p2 (+ p2 z)))))
+        (?  (progn
+              (let ((z (1- (length line))))
+                (when p1 (setq p1 (+ p1 z)))
+                (when p2 (setq p2 (+ p2 z))))))
+        (?~ (when (funcall newlinep b1 p1) (setq p1 (1+ p1)))
+            (when (funcall newlinep b2 p2) (setq p2 (1+ p2))))
+        (_)))))
 
 ;;;;;; diff-type: git-word
 (defun difflayer--overlay-diff--git-word (d)
