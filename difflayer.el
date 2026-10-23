@@ -1,13 +1,13 @@
-;;; difflayer --- Overlay diffs on selected regions -*- lexical-binding: t; -*-
+;;; difflayer.el --- Overlay diffs on selected regions -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 precompute
+;; Copyright (C) 2026 precompute
 
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: May 26, 2025
-;; Modified: October 12, 2026
-;; Version: 0.6.0
-;; Package-Requires: ((emacs "26.1"))
+;; Modified: October 23, 2026
+;; Version: 0.6.1
+;; Package-Requires: ((emacs "29.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -62,8 +62,7 @@ git-char : git diff (char)"
 Keys: :bounds :overlay :buffer")
 
 (defvar difflayer--commands
-  (list 'ediff ""
-        'diff (list "diff" "-s" "-U0")
+  (list 'diff (list "diff" "-s" "-U0")
         'git (list "git" "--no-pager" "diff" "--no-index" "-U0")
         'git-word (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain" "--word-diff-regex=[^[:space:]]+|[[:space:]]+")
         'git-char (list "git" "--no-pager" "diff" "--no-index" "-U0" "--word-diff=porcelain" "--word-diff-regex=."))
@@ -112,9 +111,9 @@ Keys: :bounds :overlay :buffer")
       (if (and (executable-find "git") (executable-find "diff"))
           (setq difflayer--cached-binary-status 'found)
         (setq difflayer--cached-binary-status 'notfound)
-        (error "Difflayer couldn't find the 'git' and/or 'diff' binaries."))
+        (error "Difflayer couldn't find the 'git' and/or 'diff' binaries"))
     (when (eq difflayer--cached-binary-status 'notfound)
-      (error "Difflayer couldn't find the 'git' and/or 'diff' binaries."))))
+      (error "Difflayer couldn't find the 'git' and/or 'diff' binaries"))))
 ;; Maybe `error' is too heavy?
 
 ;;;;; Register
@@ -274,7 +273,7 @@ When BUF is non-nil, use buffer BUF."
                     (if end? (pos-eol line) (pos-bol line)))))
 
 (defun difflayer--pos-eol (line)
-  "Call `difflayer--pos-bol' with END? set to t."
+  "Call `difflayer--pos-bol' with LINE, and END? set to t."
   (difflayer--pos-bol line t))
 
 (defun difflayer--region-pos-beg (&optional n)
@@ -283,8 +282,8 @@ When N is non-nil, use the second entry instead."
   (car (plist-get (nth (if n 1 0) difflayer--metadata) :bounds)))
 
 (defun difflayer--region-line-number-beg (buf &optional n)
-  "In buffer BUF, get line number for the beginning of the first region from `difflayer--metadata'.
-When N is non-nil, use the second region instead."
+  "In buffer BUF, get line number for the beginning of the first region from
+`difflayer--metadata'.  When N is non-nil, use the second region instead."
   (with-current-buffer buf
     (line-number-at-pos (difflayer--region-pos-beg n))))
 
@@ -305,11 +304,9 @@ This function doesn’t consider anything but hunk info."
            (b2end (let ((z (nth 3 hunkinfo)))
                     (if (= 0 z) b2beg (+ z b2beg -1)))))
       (with-current-buffer b1
-        (difflayer--add-negative-overlay
-         (difflayer--pos-bol b1beg) (difflayer--pos-eol b1end)))
+        (difflayer--add-negative-overlay (difflayer--pos-bol b1beg) (difflayer--pos-eol b1end)))
       (with-current-buffer b2
-        (difflayer--add-positive-overlay
-         (difflayer--pos-bol b2beg) (difflayer--pos-eol b2end)))
+        (difflayer--add-positive-overlay (difflayer--pos-bol b2beg) (difflayer--pos-eol b2end)))
       (difflayer--message (1+ (- b1end b1beg)) (1+ (- b2end b2beg))))))
 
 ;;;;;; diff-type: diff
@@ -331,14 +328,8 @@ This function doesn’t consider anything but hunk info."
     (dolist (line d)
       (pcase (aref line 0)
         (?@ (let ((hunkinfo (difflayer--parse-hunk-info line)))
-              (setq p1 (max s1 (difflayer--pos-bol
-                                (+ -1 (nth 0 hunkinfo)
-                                   (difflayer--region-line-number-beg b1))
-                                nil b1))
-                    p2 (max s2 (difflayer--pos-bol
-                                (+ -1 (nth 2 hunkinfo)
-                                   (difflayer--region-line-number-beg b2 t))
-                                nil b2)))))
+              (setq p1 (max s1 (difflayer--pos-bol (+ -1 (nth 0 hunkinfo) l1) nil b1))
+                    p2 (max s2 (difflayer--pos-bol (+ -1 (nth 2 hunkinfo) l2) nil b2)))))
         (?- (when p1
               (let ((z (1- (length line))))
                 (with-current-buffer b1 (difflayer--add-negative-overlay p1 (+ p1 z)))
@@ -347,10 +338,9 @@ This function doesn’t consider anything but hunk info."
               (let ((z (1- (length line))))
                 (with-current-buffer b2 (difflayer--add-positive-overlay p2 (+ p2 z)))
                 (setq p2 (+ p2 z)))))
-        (?  (progn
-              (let ((z (1- (length line))))
-                (when p1 (setq p1 (+ p1 z)))
-                (when p2 (setq p2 (+ p2 z))))))
+        (?  (let ((z (1- (length line))))
+              (when p1 (setq p1 (+ p1 z)))
+              (when p2 (setq p2 (+ p2 z)))))
         (?~ (when (funcall newlinep b1 p1) (setq p1 (1+ p1)))
             (when (funcall newlinep b2 p2) (setq p2 (1+ p2))))
         (_)))))
@@ -376,7 +366,7 @@ With \\[universal-argument] \\[universal-argument], clear all state set by diffl
            (setq difflayer-diff-style
                  (intern (completing-read
                           "Diff Style:"
-                          (caddr (custom-variable-type 'difflayer-diff-style))
+                          (list 'diff 'git 'git-char 'git-word) ;; custom-variable-type is too new?
                           nil t)))))
     (if (region-active-p)
         (difflayer--register-region)
