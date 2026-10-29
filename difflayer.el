@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 precompute
 
 ;; Author: precompute <git@precompute.net>
-;; URL: https://github.com/precompute/legit
+;; URL: https://github.com/precompute/difflayer
 ;; Created: May 26, 2025
 ;; Modified: October 23, 2026
 ;; Version: 0.6.1
