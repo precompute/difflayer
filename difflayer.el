@@ -27,6 +27,9 @@
 ;; Difflayer takes two regions and overlays their diff on them.
 
 ;;; Code:
+
+(require 'diff-mode)
+
 ;;;; Variables
 (defcustom difflayer-highlight-selections t
   "When non-nil, highlight selected regions."
