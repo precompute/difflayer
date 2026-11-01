@@ -351,6 +351,7 @@ This function doesn’t consider anything but hunk info."
   (difflayer--overlay-diff--git-char d))
 
 ;;;;; Difflayer
+;;;###autoload
 (defun difflayer (arg)
   "Select two regions and overlay their diffs on them.
 Select a region and call this function.  Repeat for the second region.
